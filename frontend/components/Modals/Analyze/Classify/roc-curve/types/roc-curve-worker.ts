@@ -1,0 +1,12 @@
+import type {RocCurveType} from "./roc-curve";
+import type {ResultJson} from "@/types/Table";
+
+export type RocCurveAnalysisType = {
+    configData: RocCurveType;
+    dataVariables: any[];
+    variables: any[];
+};
+
+export type RocCurveFinalResultType = {
+    formattedResult: ResultJson;
+};

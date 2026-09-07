@@ -1,0 +1,224 @@
+use wasm_bindgen::prelude::*;
+
+use crate::models::data::{DataRecord, VariableDefinition};
+use crate::models::{config::KnnConfig, data::AnalysisData, result::NearestNeighborAnalysis};
+use crate::utils::{converter::string_to_js_error, error::ErrorCollector, log::FunctionLogger};
+use crate::wasm::function;
+
+#[wasm_bindgen]
+pub struct KNNAnalysis {
+    config: KnnConfig,
+    data: AnalysisData,
+    result: Option<NearestNeighborAnalysis>,
+    error_collector: ErrorCollector,
+    logger: FunctionLogger,
+}
+
+#[wasm_bindgen]
+impl KNNAnalysis {
+    #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        target_data: JsValue,
+        features_data: JsValue,
+        focal_case_data: JsValue,
+        case_data: JsValue,
+        target_data_defs: JsValue,
+        features_data_defs: JsValue,
+        focal_case_data_defs: JsValue,
+        case_data_defs: JsValue,
+        config_data: JsValue,
+    ) -> Result<KNNAnalysis, JsValue> {
+        // Initialize error collector
+        let mut error_collector = ErrorCollector::default();
+
+        // Initialize function logger
+        let logger = FunctionLogger::default();
+
+        // Parse input data using serde_wasm_bindgen
+        let target_data: Vec<Vec<DataRecord>> = match serde_wasm_bindgen::from_value(target_data) {
+            Ok(data) => data,
+            Err(e) => {
+                let msg = format!("Failed to parse target data: {}", e);
+                error_collector.add_error("constructor.target_data", &msg);
+                return Err(string_to_js_error(msg));
+            }
+        };
+
+        let features_data: Vec<Vec<DataRecord>> =
+            match serde_wasm_bindgen::from_value(features_data) {
+                Ok(data) => data,
+                Err(e) => {
+                    let msg = format!("Failed to parse features data: {}", e);
+                    error_collector.add_error("constructor.features_data", &msg);
+                    return Err(string_to_js_error(msg));
+                }
+            };
+
+        let focal_case_data: Vec<Vec<DataRecord>> =
+            match serde_wasm_bindgen::from_value(focal_case_data) {
+                Ok(data) => data,
+                Err(e) => {
+                    let msg = format!("Failed to parse focal case data: {}", e);
+                    error_collector.add_error("constructor.focal_case_data", &msg);
+                    return Err(string_to_js_error(msg));
+                }
+            };
+
+        let case_data: Option<Vec<Vec<DataRecord>>> =
+            match serde_wasm_bindgen::from_value(case_data) {
+                Ok(data) => data,
+                Err(e) => {
+                    let msg = format!("Failed to parse case data: {}", e);
+                    error_collector.add_error("constructor.case_data", &msg);
+                    return Err(string_to_js_error(msg));
+                }
+            };
+
+        let target_data_defs: Vec<Vec<VariableDefinition>> =
+            match serde_wasm_bindgen::from_value(target_data_defs) {
+                Ok(data) => data,
+                Err(e) => {
+                    let msg = format!("Failed to parse target data definitions: {}", e);
+                    error_collector.add_error("constructor.target_data_defs", &msg);
+                    return Err(string_to_js_error(msg));
+                }
+            };
+
+        let features_data_defs: Vec<Vec<VariableDefinition>> =
+            match serde_wasm_bindgen::from_value(features_data_defs) {
+                Ok(data) => data,
+                Err(e) => {
+                    let msg = format!("Failed to parse features data definitions: {}", e);
+                    error_collector.add_error("constructor.features_data_defs", &msg);
+                    return Err(string_to_js_error(msg));
+                }
+            };
+
+        let focal_case_data_defs: Vec<Vec<VariableDefinition>> =
+            match serde_wasm_bindgen::from_value(focal_case_data_defs) {
+                Ok(data) => data,
+                Err(e) => {
+                    let msg = format!("Failed to parse focal case data definitions: {}", e);
+                    error_collector.add_error("constructor.focal_case_data_defs", &msg);
+                    return Err(string_to_js_error(msg));
+                }
+            };
+
+        let case_data_defs: Option<Vec<Vec<VariableDefinition>>> =
+            match serde_wasm_bindgen::from_value(case_data_defs) {
+                Ok(data) => data,
+                Err(e) => {
+                    let msg = format!("Failed to parse case data definitions: {}", e);
+                    error_collector.add_error("constructor.case_data_defs", &msg);
+                    return Err(string_to_js_error(msg));
+                }
+            };
+
+        // Parse configuration
+        let config: KnnConfig = match serde_wasm_bindgen::from_value(config_data.clone()) {
+            Ok(data) => data,
+            Err(e) => {
+                let msg =
+                    format!("Failed to parse configuration: {}. Ensure field names match the expected format.", e);
+                error_collector.add_error("constructor.config", &msg);
+
+                // Try to get a more detailed error by inspecting the config data
+                if let Ok(config_json) = js_sys::JSON::stringify(&config_data) {
+                    if let Some(config_str) = config_json.as_string() {
+                        error_collector.add_error(
+                            "constructor.config.raw",
+                            &format!("Raw config: {}", config_str),
+                        );
+                    }
+                }
+
+                return Err(string_to_js_error(msg));
+            }
+        };
+
+        // Validate important configuration
+        let target_is_missing = config
+            .main
+            .target_var
+            .as_ref()
+            .is_none_or(|target| target.trim().is_empty());
+        let features_are_missing = config.main.feature_var.as_ref().is_none_or(|features| {
+            features.is_empty() || features.iter().any(|feature| feature.trim().is_empty())
+        });
+
+        if target_is_missing && features_are_missing {
+            let msg = "At least one target or feature variable must be selected".to_string();
+            error_collector.add_error("config.validation.variables", &msg);
+            return Err(string_to_js_error(msg));
+        }
+
+        if target_is_missing {
+            let msg = "A target variable is required for KNN classification".to_string();
+            error_collector.add_error("config.validation.target_var", &msg);
+            return Err(string_to_js_error(msg));
+        }
+
+        if features_are_missing {
+            let msg = "At least one feature variable is required".to_string();
+            error_collector.add_error("config.validation.feature_var", &msg);
+            return Err(string_to_js_error(msg));
+        }
+
+        // Store data
+        let data = AnalysisData {
+            target_data,
+            features_data,
+            focal_case_data,
+            case_data,
+            target_data_defs,
+            features_data_defs,
+            focal_case_data_defs,
+            case_data_defs,
+        };
+
+        // Create instance
+        let mut analysis = KNNAnalysis {
+            config,
+            data,
+            result: None,
+            error_collector,
+            logger,
+        };
+
+        // Run the analysis using the function from function.rs
+        match function::run_analysis(
+            &analysis.data,
+            &analysis.config,
+            &mut analysis.error_collector,
+            &mut analysis.logger,
+        ) {
+            Ok(result) => {
+                analysis.result = result;
+                Ok(analysis)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    // Use functions from function.rs
+    pub fn get_results(&self) -> Result<JsValue, JsValue> {
+        function::get_results(&self.result)
+    }
+
+    pub fn get_formatted_results(&self) -> Result<JsValue, JsValue> {
+        function::get_formatted_results(&self.result)
+    }
+
+    pub fn get_all_log(&self) -> Result<JsValue, JsValue> {
+        function::get_all_log(&self.logger)
+    }
+
+    pub fn get_all_errors(&self) -> JsValue {
+        function::get_all_errors(&self.error_collector)
+    }
+
+    pub fn clear_errors(&mut self) -> JsValue {
+        function::clear_errors(&mut self.error_collector)
+    }
+}

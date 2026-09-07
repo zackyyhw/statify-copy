@@ -1,0 +1,17 @@
+export * from './StatisticsGuide';
+export * from './descriptive';
+export * from './frequencies';
+export * from './crosstabs';
+export * from './explore';
+export * from './linear';
+export * from './binary-logistic';
+export * from './ordinal-regression';
+export * from './multinomial-logistic';
+export * from './univariate';
+export * from './multivariate';
+export * from './repeated-measures';
+export * from './discriminant';
+export * from './k-means/KMeansClustering';
+// export * from './inferential';
+// export * from './modeling';
+export * from './time-series'; 
